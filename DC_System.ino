@@ -49,13 +49,14 @@ bool blastGatesEnabled = false;
 // throw limits for each gate (open/closed)
 int gateMinMax[NUMBER_OF_GATES][2] = {
   // {SERVOMIN, SERVOMAX}
-  {50, 85}, // Jointer
-  {50, 85}, // Planer
-  {50, 85}, // Miter Saw
-  {50, 85}, // Band Saw
-  {50, 85}, // Table saw
-  {50, 85}, // South Y
-  {50, 85}, // North Y
+  {45, 90}, // Jointer
+  {45, 90}, // Planer
+  {45, 90}, // Miter Saw
+  {45, 90}, // Band Saw
+  {45, 90}, // Table saw
+  {45, 90}, // Table saw
+  {45, 90}, // South Y
+  {45, 90}, // North Y
   
 };
 
@@ -71,7 +72,7 @@ int gates[NUMBER_OF_TOOLS][NUMBER_OF_GATES] = {
 
 //*** AC Globals ***//
 const int NUMBER_OF_SENSORS = 6;
-int voltSensor[NUMBER_OF_SENSORS] = {A0,A3,A1,A2,A4}; // jointer(A0), planer(A3), miter(A1), bandsaw(A2), tablesaw(A4), router(A5)
+int voltSensor[NUMBER_OF_SENSORS] = {A1,A2,A5,A3,A4,A0}; // jointer(A0), planer(A3), miter(A1), bandsaw(A2), tablesaw(A4), router(A5)
 String ampLabels[NUMBER_OF_SENSORS] = {"jointer", "planer", "miter", "bandsaw", "tablesaw", "router"};
 double ampBaselines[NUMBER_OF_SENSORS] = {0, 0, 0, 0, 0};
 double ampThresholds[NUMBER_OF_SENSORS] = {7, 7, 6, 6, 7, 6};
@@ -92,7 +93,7 @@ const int tablesawButton = 14;
 const int mitersawButton = 15;
 const int dcButton = 16;
 const int routerButton = 17;
-const int enableButton = 18;
+const int enableButton = 20;
 const int gateResetButton = 19;
 
 int buttons[NUMBER_OF_BUTTONS] = {tablesawButton, mitersawButton, dcButton, routerButton, enableButton, gateResetButton}; 
@@ -114,6 +115,9 @@ bool initiated = false; //run at startup to close gates and allow AC readings to
 bool serialControlMode = false;
 
 
+int idleCount = 0;
+
+
 const byte ROWS = 4; //four rows
 const byte COLS = 4; //three columns
 char keys[ROWS][COLS] = {
@@ -122,13 +126,14 @@ char keys[ROWS][COLS] = {
   {'7','8','9', 'C'},
   {'*','0','#', 'D'}
 };
-byte colPins[ROWS] = {5, 4, 3, 2}; //connect to the row pinouts of the keypad
-byte rowPins[COLS] = {9, 8, 7, 6}; //connect to the column pinouts of the keypad
+
+byte rowPins[ROWS] = {36, 38, 40, 42}; //connect to the row pinouts of the keypad
+byte colPins[COLS] = {44, 46, 48, 50}; //connect to the column pinouts of the keypad
 
 Keypad keypad = Keypad( makeKeymap(keys), rowPins, colPins, ROWS, COLS );  
 
 
-
+bool programActive = true;
 
 
 void setup(){ 
@@ -148,33 +153,35 @@ void setup(){
     blastGates[j].write(70); //set a neutral position to avoid a large first jump
     blastGates[j].attach(blastGatePins[j]);
   }
+  
 
-
-  printLine("Program Ready");
+  enableBlastGates();
+  delay(1500);
+  disableBlastGates();
   
 }
 
 void loop(){
   // initiate program by getting current sensor values and setting gates to middle position
-  while(1) {
-    keypadControl();
-    Serial.println("RESTART");
-    delay(1000);
-  }
+  // while(1) {
+  //   keypadControl();
+  //   Serial.println("RESTART");
+  //   delay(1000);
+  // }
   if(!initiated) {
-    enableBlastGates();
-    setGatesToNeutral();
-    delay(1000);
+    // enableBlastGates();
+    // setGatesToNeutral();
+    // delay(1000);
     setAmpBaselines();
     initiated = true;
-    delay(1000);
+    // delay(1000);
   }
 
   // check if servos are disabled when they shouldn't be
-  if(!digitalRead(blastGateEnablePin) && !blastGatesEnabled) {
-    enableBlastGates();
-    Serial.println("ENABLED BLAST GATES FROM LOOP CHECK");
-  }
+  // if(!digitalRead(blastGateEnablePin) && !blastGatesEnabled) {
+  //   enableBlastGates();
+  //   Serial.println("ENABLED BLAST GATES FROM LOOP CHECK");
+  // }
 
   // if serial control mode is active, loop until disabled
   while(serialControlMode) {
@@ -182,23 +189,37 @@ void loop(){
   }
  
 
-  checkButtons();
+  watcherFunction();
   
    //loop through tools and check
   activeTool = 99;// a number that will never happen
   readToolAmps();
   
+	idleCount++;
+	if(idleCount > 100) {
+		disableBlastGates();
+	}
+	if(collectorIsOn) {
+		idleCount = 0;
+	}
+	
+}
 
+
+void watcherFunction() {
+	keypadControl();
+	checkButtons();
 }
 
 void readToolAmps() {
   activeTool = 99;
   //add functionality if two tools are turned on
   for(int i = 0; i < NUMBER_OF_SENSORS; i++){
-      if(checkForAmperageChange(i)){
-      activeTool = i;
-      exit;
-      }
+  	watcherFunction();
+	if(checkForAmperageChange(i)){
+		activeTool = i;
+		exit;
+	}
   }
 
   // activate tool and set gate positions if a current change is detected
@@ -219,6 +240,9 @@ void readToolAmps() {
 }
 
 void activateTool(int tool) {
+	if(blastGatesEnabled == false) {
+		enableBlastGates();
+	}
   if(tool > NUMBER_OF_TOOLS) {
     Serial.println("INVALID TOOL TO ACTIVATE (activateTool)");
   }
@@ -242,20 +266,28 @@ void deactivateTool() {
 
 
 void turnOnDustCollection(){
+idleCount = 0;
   if(DEBUG) {
     printLine("DC ON");
   }
-  irSender.send(NEC,0x10EFC03F,32);
+  for(int i = 0; i<5; i++) {
+  	irSender.send(NEC,0x10EFC03F,32);
+  	delay(50);
+  }
   collectorIsOn = true;
 }
 void turnOffDustCollection(){
+	idleCount = 0;
   if(DEBUG) {
     printLine("DC OFF");
   }
+  for(int i = 0; i<5; i++) {
+  	irSender.send(NEC,0x10EFE01F,32);
+  	delay(50);
+  }
   
-  irSender.send(NEC,0x10EFE01F,32);
   collectorIsOn = false;
-  closeAll();
+  // closeAll();
 }
 
 
@@ -268,16 +300,20 @@ void turnOffDustCollection(){
 void checkButtons() {
   int activeButton = 99; //a button that will never happen
   for(int i=0; i<NUMBER_OF_BUTTONS; i++) {
+  	
     if(digitalRead(buttons[i])) {
       activeButton = buttons[i];
+      
     }
   }
 
   // button array {tablesawButton, mitersawButton, dcButton, routerButton, enableButton, gateResetButton}; 
   int toolIndex = 99;
-  switch (activeButton) {
+  if(activeButton != 99) {
+  	switch (activeButton) {
       case tablesawButton:
         toolIndex = findToolIndex("TABLESAW");
+        Serial.println("TABLESAW BUTTON");
         activateTool(toolIndex);
         while(digitalRead(activeButton)) {}
         turnOffDustCollection();
@@ -285,6 +321,7 @@ void checkButtons() {
 
       case mitersawButton:
         toolIndex = findToolIndex("MITERSAW");
+        Serial.println("MITERSAW BUTTON");
         activateTool(toolIndex);
         while(digitalRead(activeButton)) {}
         turnOffDustCollection();
@@ -292,19 +329,17 @@ void checkButtons() {
 
       case routerButton:
         toolIndex = findToolIndex("ROUTER");
+        Serial.println("ROUTER BUTTON");
         activateTool(toolIndex);
         while(digitalRead(activeButton)) {}
         turnOffDustCollection();
         break;
 
       case dcButton:
+      	Serial.println("DC BUTTON");
         turnOnDustCollection();
         while(digitalRead(activeButton)) {}
         turnOffDustCollection();
-        break;
-      case enableButton:
-        //If enabled is HIGH, disable servos
-        disableBlastGates();
         break;
       case gateResetButton:
         Serial.println("RESETING GATES (checkButtons)");
@@ -319,17 +354,20 @@ void checkButtons() {
         }
         break;
       default:
-        Serial.println("INVALID ACTIVE BUTTON (checkButtons)");
+        // Serial.println("INVALID ACTIVE BUTTON (checkButtons)");
+        break;
+        
         
     }
+  }
+  
   
 }
 
 //String gateLabels[NUMBER_OF_GATES] = {"Jointer", "Planer", "Miter", "Band Saw", "Table Saw", "Router", "South Y", "North Y"};
 
-void keypadControl() {
-  
-  int toolIndex = 99;
+void testGates() {
+	int currentGate = 0;
   char key = keypad.getKey();
 
   while(key != '*') {
@@ -338,66 +376,76 @@ void keypadControl() {
 
       switch (key) {
         case '1':
-          toolIndex = findToolIndex("TABLESAW");
-          Serial.print("TURNING ON: ");
-          Serial.println(toolIndex);
-          activateTool(toolIndex);
+	        currentGate = 0;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
 
         case '2':
-          toolIndex = findToolIndex("PLANER");
-          Serial.print("TURNING ON: ");
-          Serial.println(toolIndex);
-          activateTool(toolIndex);
+          currentGate = 1;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
 
         case '3':
-          toolIndex = findToolIndex("JOINTER");
-          Serial.print("TURNING ON: ");
-          Serial.println(toolIndex);
-          activateTool(toolIndex);
+          currentGate = 2;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
 
         case '4':
-          toolIndex = findToolIndex("MITERSAW");
-          Serial.print("TURNING ON: ");
-          Serial.println(toolIndex);
-          activateTool(toolIndex);
-
+        	currentGate = 3;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
         case '5':
-          toolIndex = findToolIndex("ROUTER");
-          Serial.print("TURNING ON: ");
-          Serial.println(toolIndex);
-          activateTool(toolIndex);
+        	currentGate = 4;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
 
         case '6':
-          toolIndex = findToolIndex("BANDSAW");
-          Serial.print("TURNING ON: ");
-          Serial.println(toolIndex);
-          activateTool(toolIndex);
+          	currentGate = 5;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
 
         case '7':
-          Serial.println("SOUTH Y");
-          
+          	currentGate = 6;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
 
         case '8':
-          Serial.println("NORTH Y");
-          
+          	currentGate = 7;
+	        openGate(currentGate);
+	        delay(1000);
+	        closeGate(currentGate);
           break;
 
         case 'A':
-          Serial.println("DC ON");
-          turnOnDustCollection();
+     		enableBlastGates();
           break;
 
         case 'B':
-          Serial.println("DC OFF");
-          turnOffDustCollection();
+        	disableBlastGates();
           break;
+        case 'C':
+        	closeGate(currentGate);
+        	break;
+        case 'D':
+        	
+        	break;
+        case '#':
+        	
+        	break;
 
         case '*':
           Serial.println("EXIT");
@@ -413,6 +461,119 @@ void keypadControl() {
 }
 
 
+void keypadControl() {
+  
+  int toolIndex = 99;
+  char key = keypad.getKey();
+
+  // while(key != '*' || programActive) {
+  //   key = keypad.getKey();
+    if(key) {
+
+      switch (key) {
+        case '1':
+          toolIndex = findToolIndex("TABLESAW");
+          Serial.print("TURNING ON: ");
+          Serial.println(toolIndex);
+          activateTool(toolIndex);
+          turnOnDustCollection();
+          waitForKey();
+          turnOffDustCollection();
+          break;
+
+        case '2':
+          toolIndex = findToolIndex("PLANER");
+          Serial.print("TURNING ON: ");
+          Serial.println(toolIndex);
+          activateTool(toolIndex);
+          turnOnDustCollection();
+          waitForKey();
+          turnOffDustCollection();
+          break;
+
+        case '3':
+          toolIndex = findToolIndex("JOINTER");
+          Serial.print("TURNING ON: ");
+          Serial.println(toolIndex);
+          activateTool(toolIndex);
+          turnOnDustCollection();
+          waitForKey();
+          turnOffDustCollection();
+          break;
+
+        case '4':
+          toolIndex = findToolIndex("MITERSAW");
+          Serial.print("TURNING ON: ");
+          Serial.println(toolIndex);
+          activateTool(toolIndex);
+          turnOnDustCollection();
+          waitForKey();
+          turnOffDustCollection();
+
+          break;
+        case '5':
+          toolIndex = findToolIndex("ROUTER");
+          Serial.print("TURNING ON: ");
+          Serial.println(toolIndex);
+          activateTool(toolIndex);
+          turnOnDustCollection();
+          waitForKey();
+          turnOffDustCollection();
+          break;
+
+        case '6':
+          toolIndex = findToolIndex("BANDSAW");
+          Serial.print("TURNING ON: ");
+          Serial.println(toolIndex);
+          activateTool(toolIndex);
+          turnOnDustCollection();
+          waitForKey();
+          turnOffDustCollection();
+          break;
+
+        case '7':
+          
+          
+          break;
+
+        case '8':
+        delay(100);
+          testGates();
+          
+          break;
+
+        case 'A':
+          Serial.println("DC ON");
+          turnOnDustCollection();
+          break;
+
+        case 'B':
+          Serial.println("DC OFF");
+          turnOffDustCollection();
+          break;
+        case 'C':
+        	setAmpBaselines();
+        case 'D':
+        	enableBlastGates();
+        	break;
+        case '#':
+        	disableBlastGates();
+        	break;
+
+        case '*':
+          Serial.println("EXIT");
+          break;
+
+        default:
+          Serial.print("INVALID KEY: ");
+          Serial.println(key);
+        
+      }
+    }
+  // }
+}
+
+
 void waitForKey() {
 	char key = keypad.getKey();
 
@@ -420,6 +581,7 @@ void waitForKey() {
 		key = keypad.getKey();
 	}
 	Serial.println("EXIT waitforKey");
+	turnOffDustCollection();
 }
 
 
@@ -476,9 +638,13 @@ void enableBlastGates() {
 void setAmpBaselines() {
   Serial.println("---- AMP BASELINES ----");
   for(int i = 0; i < NUMBER_OF_SENSORS; i++) {
-    Voltage = getVPP(voltSensor[i]);
-    VRMS = (Voltage/2.0) *0.707; 
-    AmpsRMS = (VRMS * 1000)/mVperAmp;
+  	float avgerageReading = 0;
+  	for(int j = 0; j < 10; j++) {
+  		Voltage = getVPP(voltSensor[i]);
+    	VRMS = (Voltage/2.0) *0.707; 
+    	avgerageReading += (VRMS * 1000)/mVperAmp;
+  	}
+    AmpsRMS = avgerageReading / 10;
     ampBaselines[i] = AmpsRMS;
     Serial.print(AmpsRMS);
     Serial.println(" - " + ampLabels[i]);
